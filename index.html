@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>せどりJANスキャナー</title>
+<style>
+  :root{
+    --bg:#f2f2f7;
+    --card:#ffffff;
+    --fg:#1c1c1e;
+    --muted:#6e6e73;
+    --border:#d1d1d6;
+    --accent:#0071e3;
+    --accent-fg:#ffffff;
+    --accent2:#ff9500;
+    --danger:#ff3b30;
+    --input-bg:#ffffff;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#000000;
+      --card:#1c1c1e;
+      --fg:#f2f2f7;
+      --muted:#98989d;
+      --border:#3a3a3c;
+      --accent:#0a84ff;
+      --accent-fg:#ffffff;
+      --accent2:#ff9f0a;
+      --danger:#ff453a;
+      --input-bg:#2c2c2e;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{
+    margin:0; padding:0;
+    background:var(--bg); color:var(--fg);
+    font-family:-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+    -webkit-text-size-adjust:100%;
+  }
+  body{
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    padding-top: env(safe-area-inset-top);
+  }
+  #app{ max-width:560px; margin:0 auto; padding:12px 14px 0; }
+  h1{ font-size:19px; margin:10px 0 4px; }
+  h2{ font-size:16px; margin:0 0 10px; }
+  h3{ font-size:14px; margin:16px 0 8px; color:var(--muted); }
+  .sub{ font-size:12px; color:var(--muted); margin:0 0 14px; line-height:1.5; }
+  section.card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:14px;
+    margin-bottom:14px;
+    box-shadow:var(--shadow);
+  }
+  #reader{
+    width:100%;
+    border-radius:10px;
+    overflow:hidden;
+    background:#000;
+    min-height:220px;
+  }
+  #reader video{ width:100% !important; }
+  .btn-row{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  button{
+    font-family:inherit;
+    font-size:15px;
+    font-weight:600;
+    border:none;
+    border-radius:12px;
+    padding:14px 12px;
+    cursor:pointer;
+    -webkit-appearance:none;
+    touch-action:manipulation;
+  }
+  button:active{ opacity:0.75; }
+  button:disabled{ opacity:0.4; cursor:default; }
+  .btn-primary{ background:var(--accent); color:var(--accent-fg); flex:1; }
+  .btn-secondary{ background:var(--border); color:var(--fg); flex:1; }
+  .btn-danger{ background:var(--danger); color:#fff; }
+  .btn-block{ width:100%; }
+  input[type="text"], input[type="number"], input[type="date"]{
+    font-family:inherit;
+    font-size:16px;
+    padding:13px 12px;
+    border-radius:12px;
+    border:1px solid var(--border);
+    background:var(--input-bg);
+    color:var(--fg);
+    width:100%;
+  }
+  select{
+    font-family:inherit;
+    font-size:15px;
+    padding:12px;
+    border-radius:12px;
+    border:1px solid var(--border);
+    background:var(--input-bg);
+    color:var(--fg);
+    width:100%;
+  }
+  label{ display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  .field{ margin-bottom:10px; }
+  .input-row{ display:flex; gap:8px; margin-top:10px; }
+  .input-row input{ flex:1; }
+  .input-row button{ flex-shrink:0; padding:13px 18px; }
+  .error-box{
+    background:rgba(255,59,48,0.12);
+    border:1px solid var(--danger);
+    color:var(--danger);
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:13px;
+    margin-top:10px;
+    line-height:1.5;
+  }
+  .warn-box{
+    background:rgba(255,149,0,0.12);
+    border:1px solid var(--accent2);
+    color:var(--accent2);
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:13px;
+    margin-bottom:12px;
+    line-height:1.5;
+  }
+  .code-display{
+    font-size:26px;
+    font-weight:700;
+    letter-spacing:1px;
+    font-variant-numeric: tabular-nums;
+    word-break:break-all;
+  }
+  .code-meta{ font-size:12px; color:var(--muted); margin-top:4px; }
+  .link-row{ display:flex; gap:8px; margin-top:12px; }
+  .link-btn{ flex:1; text-align:center; text-decoration:none; display:block; font-size:14px; }
+  .link-amazon{ background:#ff9900; color:#111; }
+  .link-mono{ background:#34c759; color:#fff; }
+  form#recordForm{ display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+  form#recordForm .field{ flex:1; min-width:120px; margin-bottom:0; }
+  form#recordForm button{ height:48px; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:4px; }
+  table th, table td{ text-align:left; padding:8px 4px; border-bottom:1px solid var(--border); }
+  table th{ color:var(--muted); font-weight:600; font-size:12px; }
+  .del-btn{
+    background:none; border:none; color:var(--danger); font-size:18px; padding:4px 8px; font-weight:700;
+  }
+  .empty-msg{ color:var(--muted); font-size:13px; text-align:center; padding:20px 8px; line-height:1.6; }
+  #chartWrap{ position:relative; }
+  #chartTooltip{
+    position:absolute;
+    background:var(--fg);
+    color:var(--bg);
+    font-size:12px;
+    padding:5px 9px;
+    border-radius:8px;
+    pointer-events:none;
+    white-space:nowrap;
+    transform:translate(-50%,-120%);
+    display:none;
+    z-index:5;
+    font-weight:600;
+  }
+  svg.chart{ width:100%; height:auto; display:block; touch-action:pan-y; }
+  .chart-dot{ cursor:pointer; }
+  .history-date-heading{
+    font-size:12px;
+    color:var(--muted);
+    font-weight:700;
+    margin:14px 0 6px;
+    position:sticky;
+    top:0;
+  }
+  .history-date-heading:first-child{ margin-top:0; }
+  .history-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:12px 4px;
+    border-bottom:1px solid var(--border);
+    cursor:pointer;
+  }
+  .history-row:active{ background:rgba(127,127,127,0.12); }
+  .history-code{ font-weight:600; font-size:15px; font-variant-numeric: tabular-nums; }
+  .history-time{ font-size:12px; color:var(--muted); }
+  .history-badge{
+    font-size:11px; color:var(--muted);
+  }
+  #productSelectWrap{ margin-bottom:0; }
+  footer.hint{ font-size:11px; color:var(--muted); text-align:center; padding:14px 0 4px; line-height:1.6; }
+
+  .connectivity-indicator{
+    position:sticky;
+    top:0;
+    z-index:20;
+    width:100%;
+    padding:7px 14px;
+    padding-top:calc(7px + env(safe-area-inset-top));
+    font-size:12px;
+    font-weight:700;
+    text-align:center;
+  }
+  .connectivity-indicator.is-online{ background:#34c759; color:#05260f; }
+  .connectivity-indicator.is-offline{ background:var(--danger); color:#fff; }
+
+  .reconnect-toast{
+    position:fixed;
+    left:14px;
+    right:14px;
+    bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--fg);
+    color:var(--bg);
+    padding:12px 14px;
+    border-radius:12px;
+    font-size:13px;
+    font-weight:600;
+    line-height:1.5;
+    box-shadow:0 4px 14px rgba(0,0,0,0.25);
+    z-index:30;
+    cursor:pointer;
+  }
+
+  .history-summary{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    background:rgba(255,149,0,0.12);
+    border:1px solid var(--accent2);
+    border-radius:10px;
+    padding:9px 10px;
+    margin-bottom:10px;
+    font-size:12px;
+    color:var(--accent2);
+  }
+  .history-summary button{
+    flex-shrink:0;
+    padding:8px 10px;
+    font-size:12px;
+    background:var(--accent2);
+    color:#1c1c1e;
+  }
+  .badge-unconfirmed{
+    display:inline-block;
+    font-size:10px;
+    font-weight:700;
+    color:#1c1c1e;
+    background:var(--accent2);
+    border-radius:6px;
+    padding:2px 6px;
+    margin-left:6px;
+    vertical-align:middle;
+  }
+</style>
+</head>
+<body>
+<div id="connectivityIndicator" class="connectivity-indicator" aria-live="polite"></div>
+<div id="reconnectToast" class="reconnect-toast" hidden></div>
+<div id="app">
+  <h1>せどりJANスキャナー</h1>
+  <p class="sub">JANコードをスキャンし、Amazon検索・モノトレーサーをワンタップで開いて、自分で確認した価格を記録します。</p>
+  <p class="sub">オフライン対応: 初回はオンライン状態で一度このページを開いてキャッシュを作成してください。以降は電波が無い店内でも、起動・カメラ連続スキャン・履歴・価格記録とグラフ表示までは動作します(Amazon・モノトレーサーのリンクを開く操作のみオンラインが必要です)。</p>
+
+  <!--
+    注意: カメラ機能(getUserMedia)およびService Workerによるオフライン
+    キャッシュは、ブラウザのセキュリティ制約により https:// または
+    localhost 環境でのみ動作します。
+    file:// で直接このHTMLを開いた場合はカメラもオフラインキャッシュも
+    有効になりません。GitHub Pages 等の https 環境で公開してご利用ください。
+  -->
+  <div id="protocolWarning" class="warn-box" hidden>
+    ⚠️ この画面は https(もしくは localhost)以外で開かれているため、カメラ機能は利用できません。GitHub Pages 等で公開してからお使いください。手入力欄は引き続き使用できます。
+  </div>
+
+  <section class="card">
+    <h2>① スキャン / 入力</h2>
+    <div id="reader"></div>
+    <div class="btn-row">
+      <button id="toggleCameraBtn" class="btn-primary">カメラ起動</button>
+      <button id="pauseBtn" class="btn-secondary" disabled>一時停止</button>
+    </div>
+    <div id="cameraError" class="error-box" hidden></div>
+
+    <div class="input-row">
+      <input type="text" id="codeInput" inputmode="numeric" autocomplete="off"
+             placeholder="JANコード(6〜14桁)を入力 / Bluetoothスキャナー入力" />
+      <button id="confirmBtn" class="btn-primary">確定</button>
+    </div>
+    <div id="inputError" class="error-box" hidden></div>
+  </section>
+
+  <section class="card" id="currentSection" hidden>
+    <h2>② 選択中の商品</h2>
+    <div id="productSelectWrap" class="field">
+      <label for="productSelect">過去にスキャンした商品を切り替え</label>
+      <select id="productSelect"></select>
+    </div>
+
+    <div class="code-display" id="currentCodeDisplay">-</div>
+    <div class="code-meta" id="currentCodeMeta"></div>
+
+    <div class="link-row">
+      <a href="#" target="_blank" rel="noopener" id="amazonLink" class="link-btn link-amazon">Amazonで検索</a>
+      <a href="#" target="_blank" rel="noopener" id="monoLink" class="link-btn link-mono">モノトレーサー</a>
+    </div>
+
+    <h3>価格記録を追加</h3>
+    <form id="recordForm">
+      <div class="field">
+        <label for="priceInput">価格(円)</label>
+        <input type="number" id="priceInput" inputmode="numeric" min="0" step="1" required>
+      </div>
+      <div class="field">
+        <label for="dateInput">確認日</label>
+        <input type="date" id="dateInput" required>
+      </div>
+      <button type="submit" class="btn-primary">追加</button>
+    </form>
+
+    <h3>価格推移</h3>
+    <div id="chartWrap">
+      <div id="chartContainer"></div>
+      <div id="chartTooltip"></div>
+    </div>
+
+    <h3>記録一覧</h3>
+    <div id="recordsTableWrap"></div>
+  </section>
+
+  <section class="card" id="historySection">
+    <h2>③ 履歴</h2>
+    <div id="historySummary" class="history-summary" hidden>
+      <span id="unconfirmedCountText"></span>
+      <button id="toggleUnconfirmedFilterBtn" type="button">未確認のみ表示</button>
+    </div>
+    <div id="historyList"></div>
+    <button id="showMoreBtn" class="btn-secondary btn-block" hidden style="margin-top:10px;">もっと見る</button>
+    <p class="empty-msg" id="historyEmptyMsg" hidden>まだスキャン履歴がありません</p>
+  </section>
+
+  <footer class="hint">データは端末内(localStorage)にのみ保存され、サーバーには送信されません。</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ===================== ストレージ ===================== */
+  var HISTORY_KEY = "sedori_jan_history_v1";
+  var RECORDS_KEY = "sedori_jan_records_v1";
+
+  function loadHistory(){
+    try{
+      var raw = localStorage.getItem(HISTORY_KEY);
+      return raw ? JSON.parse(raw) : [];
+    }catch(e){ return []; }
+  }
+  function saveHistory(list){
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+  }
+  function loadRecords(){
+    try{
+      var raw = localStorage.getItem(RECORDS_KEY);
+      return raw ? JSON.parse(raw) : {};
+    }catch(e){ return {}; }
+  }
+  function saveRecords(obj){
+    localStorage.setItem(RECORDS_KEY, JSON.stringify(obj));
+  }
+
+  var history = loadHistory();     // [{code, ts, checked}], 新しい順ではなく追加順で保持し表示時にソート
+  var records = loadRecords();     // { code: [{price, date, ts}] }
+  var currentCode = null;
+  var historyShowCount = 20;
+  var historyFilterUnconfirmedOnly = false;
+
+  // 旧バージョンのデータには checked フィールドが無いため、
+  // 「このアプリ上でリンクを開いた記録が無い」= 未確認 として補完する
+  (function migrateHistoryCheckedField(){
+    var needsSave = false;
+    history.forEach(function(h){
+      if(typeof h.checked !== "boolean"){ h.checked = false; needsSave = true; }
+    });
+    if(needsSave){ saveHistory(history); }
+  })();
+
+  /* ===================== DOM 参照 ===================== */
+  var $ = function(id){ return document.getElementById(id); };
+  var readerEl = $("reader");
+  var toggleCameraBtn = $("toggleCameraBtn");
+  var pauseBtn = $("pauseBtn");
+  var cameraErrorEl = $("cameraError");
+  var codeInput = $("codeInput");
+  var confirmBtn = $("confirmBtn");
+  var inputErrorEl = $("inputError");
+  var protocolWarning = $("protocolWarning");
+
+  var currentSection = $("currentSection");
+  var productSelect = $("productSelect");
+  var currentCodeDisplay = $("currentCodeDisplay");
+  var currentCodeMeta = $("currentCodeMeta");
+  var amazonLink = $("amazonLink");
+  var monoLink = $("monoLink");
+  var recordForm = $("recordForm");
+  var priceInput = $("priceInput");
+  var dateInput = $("dateInput");
+  var chartContainer = $("chartContainer");
+  var chartTooltip = $("chartTooltip");
+  var recordsTableWrap = $("recordsTableWrap");
+
+  var historyList = $("historyList");
+  var showMoreBtn = $("showMoreBtn");
+  var historyEmptyMsg = $("historyEmptyMsg");
+  var historySection = $("historySection");
+  var historySummary = $("historySummary");
+  var unconfirmedCountText = $("unconfirmedCountText");
+  var toggleUnconfirmedFilterBtn = $("toggleUnconfirmedFilterBtn");
+
+  var connectivityIndicator = $("connectivityIndicator");
+  var reconnectToast = $("reconnectToast");
+
+  /* ===================== ユーティリティ ===================== */
+  function pad2(n){ return n < 10 ? "0" + n : "" + n; }
+
+  function formatDateTime(ts){
+    var d = new Date(ts);
+    return d.getFullYear() + "/" + pad2(d.getMonth()+1) + "/" + pad2(d.getDate()) +
+           " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+  function formatDateHeading(ts){
+    var d = new Date(ts);
+    return d.getFullYear() + "年" + (d.getMonth()+1) + "月" + d.getDate() + "日";
+  }
+  function dateKey(ts){
+    var d = new Date(ts);
+    return d.getFullYear() + "-" + pad2(d.getMonth()+1) + "-" + pad2(d.getDate());
+  }
+  function todayForInput(){
+    var d = new Date();
+    return d.getFullYear() + "-" + pad2(d.getMonth()+1) + "-" + pad2(d.getDate());
+  }
+  function isValidCode(code){
+    return /^\d{6,14}$/.test(code);
+  }
+  function amazonUrl(code){ return "https://www.amazon.co.jp/s?k=" + encodeURIComponent(code); }
+  function monoUrl(code){ return "https://www.mono-tracer.com/#/list?q=" + encodeURIComponent(code); }
+
+  function showInputError(msg){
+    inputErrorEl.textContent = msg;
+    inputErrorEl.hidden = false;
+  }
+  function clearInputError(){
+    inputErrorEl.hidden = true;
+    inputErrorEl.textContent = "";
+  }
+
+  /* ===================== コード確定処理(共通) ===================== */
+  // カメラ検出・手入力・HIDスキャナーのいずれも最終的にここへ集約する
+  function confirmCode(rawCode){
+    var code = (rawCode || "").trim();
+    if(!code){ return; }
+
+    if(!isValidCode(code)){
+      showInputError("「" + code + "」は6〜14桁の数字ではないため無視しました。");
+      return;
+    }
+    clearInputError();
+
+    var entry = { code: code, ts: Date.now(), checked: false };
+    history.push(entry);
+    saveHistory(history);
+
+    setCurrentCode(code);
+    renderHistory();
+    renderProductSelect();
+  }
+
+  /* ===================== ①-2 手入力/HIDスキャナー ===================== */
+  codeInput.addEventListener("keydown", function(e){
+    if(e.key === "Enter"){
+      e.preventDefault();
+      var val = codeInput.value;
+      codeInput.value = "";
+      confirmCode(val);
+    }
+  });
+  confirmBtn.addEventListener("click", function(){
+    var val = codeInput.value;
+    codeInput.value = "";
+    confirmCode(val);
+    codeInput.focus();
+  });
+
+  /* ===================== ①-1 カメラ連続スキャン ===================== */
+  var html5QrCode = null;
+  var cameraRunning = false;
+  var cameraPaused = false;
+  var lastProcessedCode = null; // 直前に処理したコード(直近1件のみ保持)
+
+  function isSecureEnoughForCamera(){
+    return location.protocol === "https:" ||
+           location.hostname === "localhost" ||
+           location.hostname === "127.0.0.1";
+  }
+
+  if(!isSecureEnoughForCamera()){
+    protocolWarning.hidden = false;
+    toggleCameraBtn.disabled = true;
+  }
+
+  function onScanSuccess(decodedText){
+    if(cameraPaused) return;
+    if(decodedText === lastProcessedCode) return; // 同じコードが映り続けている間は無視
+    lastProcessedCode = decodedText;
+    codeInput.value = decodedText; // 手入力と同じ入力欄に反映して同じ経路で処理
+    confirmCode(decodedText);
+    codeInput.value = "";
+  }
+  function onScanFailure(){ /* デコードできないフレームは無視 */ }
+
+  function setCameraError(msg){
+    cameraErrorEl.textContent = msg;
+    cameraErrorEl.hidden = false;
+    codeInput.focus();
+  }
+  function clearCameraError(){
+    cameraErrorEl.hidden = true;
+    cameraErrorEl.textContent = "";
+  }
+
+  function startCamera(){
+    if(!isSecureEnoughForCamera()){
+      setCameraError("カメラ機能は https(または localhost)環境でのみ利用できます。手入力欄をご利用ください。");
+      return;
+    }
+    clearCameraError();
+    try{
+      html5QrCode = new Html5Qrcode("reader", {
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128
+        ],
+        verbose: false
+      });
+    }catch(e){
+      setCameraError("カメラの初期化に失敗しました: " + e);
+      return;
+    }
+
+    html5QrCode.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 260, height: 160 } },
+      onScanSuccess,
+      onScanFailure
+    ).then(function(){
+      cameraRunning = true;
+      cameraPaused = false;
+      lastProcessedCode = null;
+      toggleCameraBtn.textContent = "カメラ停止";
+      pauseBtn.disabled = false;
+      pauseBtn.textContent = "一時停止";
+    }).catch(function(err){
+      setCameraError("カメラを起動できませんでした。権限を確認するか、手入力欄をご利用ください。(" + err + ")");
+    });
+  }
+
+  function stopCamera(){
+    if(!html5QrCode || !cameraRunning){ return; }
+    html5QrCode.stop().then(function(){
+      html5QrCode.clear();
+      html5QrCode = null;
+      cameraRunning = false;
+      cameraPaused = false;
+      toggleCameraBtn.textContent = "カメラ起動";
+      pauseBtn.disabled = true;
+      pauseBtn.textContent = "一時停止";
+    }).catch(function(){
+      html5QrCode = null;
+      cameraRunning = false;
+      toggleCameraBtn.textContent = "カメラ起動";
+      pauseBtn.disabled = true;
+    });
+  }
+
+  toggleCameraBtn.addEventListener("click", function(){
+    if(cameraRunning){ stopCamera(); } else { startCamera(); }
+  });
+
+  pauseBtn.addEventListener("click", function(){
+    if(!html5QrCode || !cameraRunning) return;
+    if(!cameraPaused){
+      html5QrCode.pause(true);
+      cameraPaused = true;
+      pauseBtn.textContent = "再開";
+    } else {
+      html5QrCode.resume();
+      cameraPaused = false;
+      pauseBtn.textContent = "一時停止";
+    }
+  });
+
+  /* ===================== 商品(コード)切り替え ===================== */
+  function uniqueCodesByRecentScan(){
+    var seen = {};
+    var order = [];
+    for(var i = history.length - 1; i >= 0; i--){
+      var c = history[i].code;
+      if(!seen[c]){ seen[c] = true; order.push(c); }
+    }
+    return order;
+  }
+
+  function renderProductSelect(){
+    var codes = uniqueCodesByRecentScan();
+    productSelect.innerHTML = "";
+    codes.forEach(function(c){
+      var opt = document.createElement("option");
+      opt.value = c;
+      var count = history.filter(function(h){ return h.code === c; }).length;
+      opt.textContent = c + "(スキャン" + count + "回)";
+      productSelect.appendChild(opt);
+    });
+    if(currentCode){ productSelect.value = currentCode; }
+  }
+
+  productSelect.addEventListener("change", function(){
+    setCurrentCode(productSelect.value, { skipSelectSync:true, scroll:true });
+  });
+
+  // 店舗での連続スキャン中に確定のたびへ画面がスクロールするとカメラ映像が
+  // 見えなくなってしまうため、自動スクロールは「初めてこの区画が表示される時」と
+  // 「履歴タップ/セレクトボックスからの明示的な選択」に限定する。
+  function setCurrentCode(code, opts){
+    opts = opts || {};
+    var wasHidden = currentSection.hidden;
+    currentCode = code;
+    currentSection.hidden = false;
+
+    currentCodeDisplay.textContent = code;
+    var relatedHistory = history.filter(function(h){ return h.code === code; });
+    var lastTs = relatedHistory.length ? relatedHistory[relatedHistory.length - 1].ts : null;
+    var unconfirmedCount = relatedHistory.filter(function(h){ return !h.checked; }).length;
+    currentCodeMeta.textContent = "スキャン回数: " + relatedHistory.length + "回" +
+      (lastTs ? " / 最終: " + formatDateTime(lastTs) : "") +
+      (unconfirmedCount > 0 ? " / 未確認のスキャンが" + unconfirmedCount + "件あります" : " / すべて確認済み");
+
+    amazonLink.href = amazonUrl(code);
+    monoLink.href = monoUrl(code);
+
+    dateInput.value = todayForInput();
+    priceInput.value = "";
+
+    if(!opts.skipSelectSync){
+      renderProductSelect();
+    }
+
+    renderChart();
+    renderRecordsTable();
+
+    if(opts.scroll === true || (opts.scroll !== false && wasHidden)){
+      currentSection.scrollIntoView({ behavior:"smooth", block:"start" });
+    }
+  }
+
+  /* ===================== 履歴の未確認/確認済み管理 ===================== */
+  // Amazon・モノトレーサーいずれかのリンクを開いたら、そのコードに紐づく
+  // 履歴項目を「確認済み」にする(個々のスキャン日時ではなく商品単位で判定)
+  function markCodeChecked(code){
+    var changed = false;
+    history.forEach(function(h){
+      if(h.code === code && !h.checked){ h.checked = true; changed = true; }
+    });
+    if(changed){
+      saveHistory(history);
+      renderHistory();
+      var relatedHistory = history.filter(function(h){ return h.code === code; });
+      currentCodeMeta.textContent = "スキャン回数: " + relatedHistory.length + "回" +
+        " / すべて確認済み";
+    }
+  }
+  amazonLink.addEventListener("click", function(){ if(currentCode) markCodeChecked(currentCode); });
+  monoLink.addEventListener("click", function(){ if(currentCode) markCodeChecked(currentCode); });
+
+  /* ===================== 価格記録 ===================== */
+  recordForm.addEventListener("submit", function(e){
+    e.preventDefault();
+    if(!currentCode) return;
+    var price = parseInt(priceInput.value, 10);
+    var date = dateInput.value;
+    if(isNaN(price) || price < 0 || !date){ return; }
+
+    if(!records[currentCode]){ records[currentCode] = []; }
+    records[currentCode].push({ price: price, date: date, ts: Date.now() });
+    saveRecords(records);
+
+    priceInput.value = "";
+    renderChart();
+    renderRecordsTable();
+  });
+
+  function getSortedRecords(code){
+    var list = (records[code] || []).slice();
+    list.sort(function(a,b){
+      if(a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return a.ts - b.ts;
+    });
+    return list;
+  }
+
+  function renderRecordsTable(){
+    var list = getSortedRecords(currentCode).slice().reverse(); // 新しい順
+    if(list.length === 0){
+      recordsTableWrap.innerHTML = '<p class="empty-msg">まだ価格記録がありません</p>';
+      return;
+    }
+    var html = '<table><thead><tr><th>確認日</th><th>価格</th><th></th></tr></thead><tbody>';
+    list.forEach(function(r){
+      html += '<tr data-ts="' + r.ts + '">' +
+              '<td>' + r.date + '</td>' +
+              '<td>' + r.price.toLocaleString() + '円</td>' +
+              '<td style="text-align:right;"><button class="del-btn" data-ts="' + r.ts + '">✕</button></td>' +
+              '</tr>';
+    });
+    html += '</tbody></table>';
+    recordsTableWrap.innerHTML = html;
+
+    recordsTableWrap.querySelectorAll(".del-btn").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        if(!window.confirm("この記録を削除しますか?")) return;
+        var ts = Number(btn.getAttribute("data-ts"));
+        records[currentCode] = (records[currentCode] || []).filter(function(r){ return r.ts !== ts; });
+        saveRecords(records);
+        renderChart();
+        renderRecordsTable();
+      });
+    });
+  }
+
+  /* ===================== グラフ(自作SVG折れ線) ===================== */
+  function renderChart(){
+    var list = getSortedRecords(currentCode);
+    chartTooltip.style.display = "none";
+
+    if(list.length <= 1){
+      chartContainer.innerHTML = '<p class="empty-msg">記録が2件以上になると価格推移グラフが表示されます</p>';
+      return;
+    }
+
+    var W = 320, H = 180;
+    var padL = 46, padR = 14, padT = 14, padB = 26;
+    var innerW = W - padL - padR;
+    var innerH = H - padT - padB;
+
+    var prices = list.map(function(r){ return r.price; });
+    var minP = Math.min.apply(null, prices);
+    var maxP = Math.max.apply(null, prices);
+    if(minP === maxP){ minP = minP - 1; maxP = maxP + 1; }
+
+    var n = list.length;
+    function xAt(i){ return padL + (n === 1 ? innerW/2 : (innerW * i / (n - 1))); }
+    function yAt(p){ return padT + innerH - ((p - minP) / (maxP - minP)) * innerH; }
+
+    var points = list.map(function(r, i){ return { x: xAt(i), y: yAt(r.price), date: r.date, price: r.price }; });
+    var pathD = points.map(function(pt, i){ return (i === 0 ? "M" : "L") + pt.x.toFixed(1) + "," + pt.y.toFixed(1); }).join(" ");
+
+    var rootStyle = getComputedStyle(document.documentElement);
+    var accentColor = (rootStyle.getPropertyValue("--accent") || "#0071e3").trim();
+    var cardColor = (rootStyle.getPropertyValue("--card") || "#ffffff").trim();
+
+    var svg = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+
+    // 補助線(上下)
+    svg += '<line x1="' + padL + '" y1="' + padT + '" x2="' + (W - padR) + '" y2="' + padT + '" stroke="currentColor" stroke-opacity="0.15" stroke-width="1"/>';
+    svg += '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' + (H - padB) + '" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>';
+
+    // Y軸ラベル(最大・最小)
+    svg += '<text x="2" y="' + (padT + 4) + '" font-size="9" fill="currentColor" opacity="0.6">' + maxP.toLocaleString() + '円</text>';
+    svg += '<text x="2" y="' + (H - padB + 4) + '" font-size="9" fill="currentColor" opacity="0.6">' + minP.toLocaleString() + '円</text>';
+
+    // X軸ラベル(最初・最後の日付)
+    svg += '<text x="' + padL + '" y="' + (H - 6) + '" font-size="9" fill="currentColor" opacity="0.6">' + list[0].date + '</text>';
+    svg += '<text x="' + (W - padR) + '" y="' + (H - 6) + '" font-size="9" text-anchor="end" fill="currentColor" opacity="0.6">' + list[n-1].date + '</text>';
+
+    // 折れ線
+    svg += '<path d="' + pathD + '" fill="none" stroke="' + accentColor + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+
+    // ドット
+    points.forEach(function(pt, i){
+      svg += '<circle class="chart-dot" data-date="' + pt.date + '" data-price="' + pt.price +
+             '" cx="' + pt.x.toFixed(1) + '" cy="' + pt.y.toFixed(1) + '" r="7" fill="transparent" stroke="none"></circle>';
+      svg += '<circle cx="' + pt.x.toFixed(1) + '" cy="' + pt.y.toFixed(1) + '" r="3.5" fill="' + accentColor + '" stroke="' + cardColor + '" stroke-width="1.5" pointer-events="none"></circle>';
+    });
+
+    svg += '</svg>';
+    chartContainer.innerHTML = svg;
+
+    var svgEl = chartContainer.querySelector("svg");
+    function showTooltip(target){
+      var date = target.getAttribute("data-date");
+      var price = target.getAttribute("data-price");
+      var cx = parseFloat(target.getAttribute("cx"));
+      var cy = parseFloat(target.getAttribute("cy"));
+      var rect = svgEl.getBoundingClientRect();
+      var scale = rect.width / W;
+      chartTooltip.textContent = date + " : " + Number(price).toLocaleString() + "円";
+      chartTooltip.style.left = (cx * scale) + "px";
+      chartTooltip.style.top = (cy * scale) + "px";
+      chartTooltip.style.display = "block";
+    }
+    chartContainer.querySelectorAll(".chart-dot").forEach(function(dot){
+      dot.addEventListener("click", function(){ showTooltip(dot); });
+      dot.addEventListener("mouseenter", function(){ showTooltip(dot); });
+    });
+    svgEl.addEventListener("touchstart", function(e){
+      var target = e.target;
+      if(target.classList && target.classList.contains("chart-dot")){
+        showTooltip(target);
+      }
+    }, { passive:true });
+  }
+
+  /* ===================== 履歴一覧 ===================== */
+  function renderHistory(){
+    var unconfirmedTotal = history.filter(function(h){ return !h.checked; }).length;
+
+    if(unconfirmedTotal > 0){
+      historySummary.hidden = false;
+      unconfirmedCountText.textContent = "未確認: " + unconfirmedTotal + "件";
+      toggleUnconfirmedFilterBtn.textContent = historyFilterUnconfirmedOnly ? "すべて表示" : "未確認のみ表示";
+    } else {
+      historySummary.hidden = true;
+      historyFilterUnconfirmedOnly = false;
+    }
+
+    if(history.length === 0){
+      historyList.innerHTML = "";
+      historyEmptyMsg.hidden = false;
+      showMoreBtn.hidden = true;
+      return;
+    }
+
+    var base = historyFilterUnconfirmedOnly
+      ? history.filter(function(h){ return !h.checked; })
+      : history;
+
+    if(base.length === 0){
+      historyList.innerHTML = "";
+      historyEmptyMsg.hidden = true;
+      showMoreBtn.hidden = true;
+      historyList.innerHTML = '<p class="empty-msg">未確認の履歴はありません</p>';
+      return;
+    }
+    historyEmptyMsg.hidden = true;
+
+    var sorted = base.slice().sort(function(a,b){ return b.ts - a.ts; });
+    var visible = sorted.slice(0, historyShowCount);
+
+    var html = "";
+    var lastDateKey = null;
+    visible.forEach(function(item){
+      var dk = dateKey(item.ts);
+      if(dk !== lastDateKey){
+        html += '<div class="history-date-heading">' + formatDateHeading(item.ts) + '</div>';
+        lastDateKey = dk;
+      }
+      html += '<div class="history-row" data-code="' + item.code + '">' +
+              '<div><div class="history-code">' + item.code +
+              (item.checked ? "" : '<span class="badge-unconfirmed">未確認</span>') + '</div>' +
+              '<div class="history-time">' + formatDateTime(item.ts) + '</div></div>' +
+              '<div class="history-badge">›</div>' +
+              '</div>';
+    });
+    historyList.innerHTML = html;
+
+    historyList.querySelectorAll(".history-row").forEach(function(row){
+      row.addEventListener("click", function(){
+        setCurrentCode(row.getAttribute("data-code"), { scroll:true });
+      });
+    });
+
+    showMoreBtn.hidden = sorted.length <= historyShowCount;
+  }
+
+  showMoreBtn.addEventListener("click", function(){
+    historyShowCount += 20;
+    renderHistory();
+  });
+
+  toggleUnconfirmedFilterBtn.addEventListener("click", function(){
+    historyFilterUnconfirmedOnly = !historyFilterUnconfirmedOnly;
+    historyShowCount = 20;
+    renderHistory();
+  });
+
+  /* ===================== オンライン/オフライン表示 ===================== */
+  var reconnectToastTimer = null;
+
+  function updateConnectivityIndicator(){
+    var online = navigator.onLine;
+    connectivityIndicator.textContent = online ? "オンラインです" : "オフラインです(スキャン・履歴・記録は引き続き使えます)";
+    connectivityIndicator.classList.toggle("is-online", online);
+    connectivityIndicator.classList.toggle("is-offline", !online);
+  }
+
+  function showReconnectToast(){
+    var unconfirmedTotal = history.filter(function(h){ return !h.checked; }).length;
+    var hasUnconfirmed = unconfirmedTotal > 0;
+    reconnectToast.textContent = hasUnconfirmed
+      ? "オンラインに戻りました。未確認の履歴が" + unconfirmedTotal + "件あります(タップで表示)"
+      : "オンラインに戻りました";
+    reconnectToast.dataset.hasUnconfirmed = hasUnconfirmed ? "1" : "0";
+    reconnectToast.hidden = false;
+
+    clearTimeout(reconnectToastTimer);
+    reconnectToastTimer = setTimeout(function(){ reconnectToast.hidden = true; }, 5000);
+  }
+
+  // ブラウザの仕様上、オンライン復帰時にリンクを自動で新しいタブで開くことは
+  // ポップアップブロックにより出来ないため、代わりに未確認の履歴だけを
+  // すぐ絞り込んで表示できる状態にしておく(タップして手動で開く)
+  reconnectToast.addEventListener("click", function(){
+    if(reconnectToast.dataset.hasUnconfirmed === "1"){
+      historyFilterUnconfirmedOnly = true;
+      historyShowCount = 20;
+      renderHistory();
+      historySection.scrollIntoView({ behavior:"smooth", block:"start" });
+    }
+    clearTimeout(reconnectToastTimer);
+    reconnectToast.hidden = true;
+  });
+
+  window.addEventListener("online", function(){
+    updateConnectivityIndicator();
+    showReconnectToast();
+  });
+  window.addEventListener("offline", function(){
+    updateConnectivityIndicator();
+  });
+  updateConnectivityIndicator();
+
+  /* ===================== Service Worker登録(オフラインキャッシュ) ===================== */
+  // sw.js は cache-first でアプリ本体とhtml5-qrcodeのCDNスクリプトをキャッシュする。
+  // 単一HTMLファイルの原則の例外として、Service Workerだけは別ファイルが必須なため
+  // sw.js を分離している。https(またはlocalhost)以外では登録自体が失敗するだけで、
+  // 通常のオンライン動作には影響しない。
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(err){
+        console.warn("Service Workerの登録に失敗しました(オフライン機能は無効):", err);
+      });
+    });
+  }
+
+  /* ===================== 初期化 ===================== */
+  renderHistory();
+  renderProductSelect();
+  if(history.length > 0){
+    var sorted = history.slice().sort(function(a,b){ return b.ts - a.ts; });
+    setCurrentCode(sorted[0].code, { skipSelectSync:false, scroll:false });
+  }
+
+})();
+</script>
+</body>
+</html>
