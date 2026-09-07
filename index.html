@@ -60,6 +60,7 @@
     margin-bottom:14px;
     box-shadow:var(--shadow);
   }
+  .reader-wrap{ position:relative; }
   #reader{
     width:100%;
     border-radius:10px;
@@ -70,12 +71,31 @@
   #reader video{ width:100% !important; }
   .scan-hint{ font-size:12px; color:var(--muted); margin:8px 0 0; line-height:1.5; }
 
-  /* スキャン成功時、枠を一瞬緑色に点灯させてから自動的に消える */
-  @keyframes scanFlash{
-    0%{ box-shadow: inset 0 0 0 4px rgba(52,199,89,0.95); }
-    100%{ box-shadow: inset 0 0 0 4px rgba(52,199,89,0); }
+  /*
+   * スキャン成功時の緑点灯フィードバック用オーバーレイ。
+   * box-shadowを直接 #reader に付けると、video要素は通常フローの子として
+   * 背景/box-shadowより手前に描画されるため映像の下に隠れて見えなくなる。
+   * そのため video の上に確実に重なるよう、#reader とは別の絶対配置
+   * オーバーレイ要素(#reader の兄弟要素)として用意する。
+   */
+  #scanFlashOverlay{
+    position:absolute;
+    inset:0;
+    z-index:10;
+    border-radius:10px;
+    pointer-events:none;
   }
-  #reader.scan-flash{ animation: scanFlash 0.4s ease-out; }
+  @keyframes scanFlash{
+    0%{
+      box-shadow: inset 0 0 0 6px rgba(52,199,89,0.95);
+      background: rgba(52,199,89,0.28);
+    }
+    100%{
+      box-shadow: inset 0 0 0 6px rgba(52,199,89,0);
+      background: rgba(52,199,89,0);
+    }
+  }
+  #scanFlashOverlay.scan-flash{ animation: scanFlash 0.4s ease-out; }
   .btn-row{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
   button{
     font-family:inherit;
@@ -328,8 +348,11 @@
 
   <section class="card">
     <h2>① スキャン / 入力</h2>
-    <div id="reader"></div>
-    <p class="scan-hint">画面全体がバーコードの検出範囲です。枠に収めようと近づきすぎるとピントが合わなくなるため、バーコード全体が画面に映る距離でかざしてください。</p>
+    <div class="reader-wrap">
+      <div id="reader"></div>
+      <div id="scanFlashOverlay"></div>
+    </div>
+    <p class="scan-hint">この枠内にバーコードを収めてください。無理に近づく必要はありません。</p>
     <div class="btn-row">
       <button id="toggleCameraBtn" class="btn-primary">カメラ起動</button>
       <button id="pauseBtn" class="btn-secondary" disabled>一時停止</button>
@@ -445,6 +468,7 @@
   /* ===================== DOM 参照 ===================== */
   var $ = function(id){ return document.getElementById(id); };
   var readerEl = $("reader");
+  var scanFlashOverlay = $("scanFlashOverlay");
   var toggleCameraBtn = $("toggleCameraBtn");
   var pauseBtn = $("pauseBtn");
   var torchBtn = $("torchBtn");
@@ -583,9 +607,9 @@
   // タイマー管理をする必要はない(同じバーコードが映り続けている間は
   // クラスを一旦外して付け直すことでアニメーションを再トリガーする)。
   function flashScanSuccess(){
-    readerEl.classList.remove("scan-flash");
-    void readerEl.offsetWidth; // reflowを強制してアニメーションを再スタートさせる
-    readerEl.classList.add("scan-flash");
+    scanFlashOverlay.classList.remove("scan-flash");
+    void scanFlashOverlay.offsetWidth; // reflowを強制してアニメーションを再スタートさせる
+    scanFlashOverlay.classList.add("scan-flash");
   }
 
   function onScanSuccess(decodedText){
@@ -631,9 +655,18 @@
       return;
     }
 
-    // qrboxを指定しない(=映像全体を検出対象にする)。枠に収めようとして
-    // カメラを近づけすぎると最短合焦距離を超えてピンボケし、逆に読み取れなく
-    // なるため、画面全体をスキャン範囲にして距離の融通を利かせる。
+    // qrboxは固定ピクセル値ではなく、実際の映像表示サイズ(viewfinderの
+    // 幅・高さ)を受け取るコールバック形式で指定する。これにより画面幅の
+    // 85〜90%・高さの35〜40%程度の横長の帯状の枠になり、解像度や画面
+    // サイズが変わっても比率が保たれる。小さすぎて近づきすぎる問題も、
+    // 大きすぎて背景の無関係なバーコードまで拾ってしまう問題も避ける
+    // ための中間サイズ。
+    function qrboxFunction(viewfinderWidth, viewfinderHeight){
+      return {
+        width: Math.floor(viewfinderWidth * 0.87),
+        height: Math.floor(viewfinderHeight * 0.37)
+      };
+    }
     //
     // 解像度の指定は第1引数(カメラ選択用の facingMode/deviceId 指定)に
     // width/height を混ぜると、html5-qrcode内部のカメラ選択バリデーションに
@@ -645,6 +678,7 @@
       { facingMode: "environment" },
       {
         fps: 10,
+        qrbox: qrboxFunction,
         videoConstraints: {
           facingMode: "environment",
           width: { ideal: 1920 },
