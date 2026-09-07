@@ -143,7 +143,6 @@
   .link-row{ display:flex; gap:8px; margin-top:12px; }
   .link-btn{ flex:1; text-align:center; text-decoration:none; display:block; font-size:14px; }
   .link-amazon{ background:#ff9900; color:#111; }
-  .link-mono{ background:#34c759; color:#fff; }
   form#recordForm{ display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
   form#recordForm .field{ flex:1; min-width:120px; margin-bottom:0; }
   form#recordForm button{ height:48px; }
@@ -279,16 +278,6 @@
   .mono-embed-title{ font-size:13px; font-weight:700; color:var(--fg); }
   .mono-embed-actions{ display:flex; align-items:center; gap:10px; }
   .mono-embed-actions a{ font-size:12px; color:var(--accent); text-decoration:none; font-weight:600; }
-  .mono-embed-close{
-    background:var(--border);
-    color:var(--fg);
-    font-size:12px;
-    font-weight:700;
-    border:none;
-    border-radius:8px;
-    padding:6px 10px;
-    cursor:pointer;
-  }
   .mono-embed-note{
     font-size:11px;
     color:var(--muted);
@@ -331,6 +320,7 @@
     <div class="btn-row">
       <button id="toggleCameraBtn" class="btn-primary">カメラ起動</button>
       <button id="pauseBtn" class="btn-secondary" disabled>一時停止</button>
+      <button id="torchBtn" class="btn-secondary" hidden>ライトON</button>
     </div>
     <div id="cameraError" class="error-box" hidden></div>
 
@@ -353,19 +343,17 @@
     <div class="code-meta" id="currentCodeMeta"></div>
 
     <div class="link-row">
-      <a href="#" target="_blank" rel="noopener" id="amazonLink" class="link-btn link-amazon">Amazonで検索</a>
-      <button type="button" id="monoLink" class="link-btn link-mono">モノトレーサーで見る</button>
+      <a href="#" target="_blank" rel="noopener" id="amazonLink" class="link-btn link-amazon" style="flex:1 1 100%;">Amazonで検索</a>
     </div>
 
-    <div id="monoEmbedSection" class="mono-embed" hidden>
+    <div id="monoEmbedSection" class="mono-embed">
       <div class="mono-embed-header">
-        <span class="mono-embed-title">モノトレーサー</span>
+        <span class="mono-embed-title">モノトレーサー(自動表示)</span>
         <div class="mono-embed-actions">
           <a id="monoEmbedOpenNewTab" href="#" target="_blank" rel="noopener">別タブで開く</a>
-          <button type="button" id="monoEmbedCloseBtn" class="mono-embed-close">閉じる</button>
         </div>
       </div>
-      <p class="mono-embed-note">埋め込み表示が空白のままの場合、モノトレーサー側の設定により埋め込み表示がブロックされています。上の「別タブで開く」をご利用ください。</p>
+      <p class="mono-embed-note">選択中の商品のモノトレーサーの内容が自動で表示されます。オフライン時、または埋め込みがモノトレーサー側の設定でブロックされている場合は空白のままになります。その場合は上の「別タブで開く」をご利用ください。</p>
       <iframe id="monoEmbedIframe" src="about:blank" loading="lazy" referrerpolicy="no-referrer"></iframe>
     </div>
 
@@ -455,6 +443,7 @@
   var readerEl = $("reader");
   var toggleCameraBtn = $("toggleCameraBtn");
   var pauseBtn = $("pauseBtn");
+  var torchBtn = $("torchBtn");
   var cameraErrorEl = $("cameraError");
   var codeInput = $("codeInput");
   var confirmBtn = $("confirmBtn");
@@ -466,11 +455,9 @@
   var currentCodeDisplay = $("currentCodeDisplay");
   var currentCodeMeta = $("currentCodeMeta");
   var amazonLink = $("amazonLink");
-  var monoLink = $("monoLink");
   var monoEmbedSection = $("monoEmbedSection");
   var monoEmbedIframe = $("monoEmbedIframe");
   var monoEmbedOpenNewTab = $("monoEmbedOpenNewTab");
-  var monoEmbedCloseBtn = $("monoEmbedCloseBtn");
   var recordForm = $("recordForm");
   var priceInput = $("priceInput");
   var dateInput = $("dateInput");
@@ -512,6 +499,11 @@
   function isValidCode(code){
     return /^\d{6,14}$/.test(code);
   }
+  // 書籍の2段目バーコード(価格・分類情報。191または192で始まる)は
+  // 商品検索に使えないコードなので、商品コードとしては扱わない
+  function isBookPriceCode(code){
+    return /^(191|192)/.test(code);
+  }
   function amazonUrl(code){ return "https://www.amazon.co.jp/s?k=" + encodeURIComponent(code); }
   function monoUrl(code){ return "https://www.mono-tracer.com/#/list?q=" + encodeURIComponent(code); }
 
@@ -532,6 +524,12 @@
 
     if(!isValidCode(code)){
       showInputError("「" + code + "」は6〜14桁の数字ではないため無視しました。");
+      return;
+    }
+    if(isBookPriceCode(code)){
+      // 書籍の2段目(価格)バーコードは商品コードではないため、
+      // カメラ・手入力・HIDスキャナーいずれの経路でも何もせず無視する
+      clearInputError();
       return;
     }
     clearInputError();
@@ -566,6 +564,7 @@
   var cameraRunning = false;
   var cameraPaused = false;
   var lastProcessedCode = null; // 直前に処理したコード(直近1件のみ保持)
+  var torchOn = false;
 
   function isSecureEnoughForCamera(){
     return location.protocol === "https:" ||
@@ -623,8 +622,9 @@
     // qrboxを指定しない(=映像全体を検出対象にする)。枠に収めようとして
     // カメラを近づけすぎると最短合焦距離を超えてピンボケし、逆に読み取れなく
     // なるため、画面全体をスキャン範囲にして距離の融通を利かせる。
+    // videoConstraintsで解像度を明示的に指定し、読み取り精度を上げる。
     html5QrCode.start(
-      { facingMode: "environment" },
+      { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
       { fps: 10 },
       onScanSuccess,
       onScanFailure
@@ -635,6 +635,7 @@
       toggleCameraBtn.textContent = "カメラ停止";
       pauseBtn.disabled = false;
       pauseBtn.textContent = "一時停止";
+      updateTorchButtonAvailability();
     }).catch(function(err){
       setCameraError("カメラを起動できませんでした。権限を確認するか、手入力欄をご利用ください。(" + err + ")");
     });
@@ -650,13 +651,47 @@
       toggleCameraBtn.textContent = "カメラ起動";
       pauseBtn.disabled = true;
       pauseBtn.textContent = "一時停止";
+      resetTorchButton();
     }).catch(function(){
       html5QrCode = null;
       cameraRunning = false;
       toggleCameraBtn.textContent = "カメラ起動";
       pauseBtn.disabled = true;
+      resetTorchButton();
     });
   }
+
+  /* ===================== ライト(トーチ)ON/OFF ===================== */
+  // 対応デバイスでのみボタンを表示する。html5-qrcodeの低レベルAPIである
+  // getRunningTrackCapabilities()/applyVideoConstraints()を使い、
+  // MediaStreamTrackのtorchケイパビリティを直接操作する。
+  function updateTorchButtonAvailability(){
+    var supported = false;
+    try{
+      var caps = html5QrCode && html5QrCode.getRunningTrackCapabilities();
+      supported = !!(caps && caps.torch);
+    }catch(e){ supported = false; }
+
+    torchBtn.hidden = !supported;
+    torchOn = false;
+    torchBtn.textContent = "ライトON";
+  }
+  function resetTorchButton(){
+    torchOn = false;
+    torchBtn.hidden = true;
+    torchBtn.textContent = "ライトON";
+  }
+  torchBtn.addEventListener("click", function(){
+    if(!html5QrCode || !cameraRunning) return;
+    var nextState = !torchOn;
+    html5QrCode.applyVideoConstraints({ advanced: [{ torch: nextState }] }).then(function(){
+      torchOn = nextState;
+      torchBtn.textContent = torchOn ? "ライトOFF" : "ライトON";
+    }).catch(function(){
+      // 対応していないデバイス/ブラウザだった場合はボタン自体を隠す
+      torchBtn.hidden = true;
+    });
+  });
 
   toggleCameraBtn.addEventListener("click", function(){
     if(cameraRunning){ stopCamera(); } else { startCamera(); }
@@ -710,12 +745,6 @@
     opts = opts || {};
     var wasHidden = currentSection.hidden;
 
-    // 表示中の商品が切り替わる場合は、古い商品のモノトレーサー埋め込みを
-    // 表示したままにしないよう閉じておく
-    if(code !== currentCode){
-      closeMonoEmbed();
-    }
-
     currentCode = code;
     currentSection.hidden = false;
 
@@ -728,6 +757,7 @@
       (unconfirmedCount > 0 ? " / 未確認のスキャンが" + unconfirmedCount + "件あります" : " / すべて確認済み");
 
     amazonLink.href = amazonUrl(code);
+    updateMonoEmbed(code);
 
     dateInput.value = todayForInput();
     priceInput.value = "";
@@ -762,35 +792,24 @@
   }
   amazonLink.addEventListener("click", function(){ if(currentCode) markCodeChecked(currentCode); });
 
-  /* ===================== モノトレーサーのiframe埋め込み ===================== */
+  /* ===================== モノトレーサーのiframe自動表示 ===================== */
   // Amazonはほぼ確実に埋め込み(iframe)を禁止しているため新しいタブのままにするが、
-  // モノトレーサーは同一画面内にiframeで埋め込む。ただし相手サイトが
-  // X-Frame-Options等で埋め込みをブロックしている場合、iframeの中身が空白に
-  // なってもJavaScript側からは確実に検知できないため、「別タブで開く」を
-  // 必ず併設して逃げ道を用意する。
-  function openMonoEmbed(code){
+  // モノトレーサーはコードが確定した瞬間(新規スキャン・手入力・履歴からの選択・
+  // セレクトボックスでの切り替え、いずれも setCurrentCode を経由する)に
+  // 自動でiframeへ読み込む。相手サイトがX-Frame-Options等で埋め込みを
+  // ブロックしている場合、iframeの中身が空白になってもJavaScript側からは
+  // 確実に検知できないため、「別タブで開く」を必ず併設して逃げ道を用意する。
+  var monoEmbedLoadedCode = null; // 直近にiframeへ読み込んだコード(同じコードの再読み込みを避け通信量を節約)
+  function updateMonoEmbed(code){
+    if(code === monoEmbedLoadedCode) return;
+    monoEmbedLoadedCode = code;
     var url = monoUrl(code);
     monoEmbedIframe.src = url;
     monoEmbedOpenNewTab.href = url;
-    monoEmbedSection.hidden = false;
-    monoEmbedSection.scrollIntoView({ behavior:"smooth", block:"start" });
-  }
-  function closeMonoEmbed(){
-    if(monoEmbedSection.hidden) return;
-    monoEmbedSection.hidden = true;
-    monoEmbedIframe.src = "about:blank"; // 裏で読み込み続けないよう解放する
   }
 
-  monoLink.addEventListener("click", function(){
-    if(!currentCode) return;
-    markCodeChecked(currentCode);
-    openMonoEmbed(currentCode);
-  });
   monoEmbedOpenNewTab.addEventListener("click", function(){
     if(currentCode) markCodeChecked(currentCode);
-  });
-  monoEmbedCloseBtn.addEventListener("click", function(){
-    closeMonoEmbed();
   });
 
   /* ===================== 価格記録 ===================== */
