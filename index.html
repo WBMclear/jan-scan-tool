@@ -69,6 +69,13 @@
   }
   #reader video{ width:100% !important; }
   .scan-hint{ font-size:12px; color:var(--muted); margin:8px 0 0; line-height:1.5; }
+
+  /* スキャン成功時、枠を一瞬緑色に点灯させてから自動的に消える */
+  @keyframes scanFlash{
+    0%{ box-shadow: inset 0 0 0 4px rgba(52,199,89,0.95); }
+    100%{ box-shadow: inset 0 0 0 4px rgba(52,199,89,0); }
+  }
+  #reader.scan-flash{ animation: scanFlash 0.4s ease-out; }
   .btn-row{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
   button{
     font-family:inherit;
@@ -179,20 +186,26 @@
     top:0;
   }
   .history-date-heading:first-child{ margin-top:0; }
+  .history-item{ border-bottom:1px solid var(--border); }
   .history-row{
     display:flex;
     justify-content:space-between;
     align-items:center;
     padding:12px 4px;
-    border-bottom:1px solid var(--border);
     cursor:pointer;
   }
   .history-row:active{ background:rgba(127,127,127,0.12); }
   .history-code{ font-weight:600; font-size:15px; font-variant-numeric: tabular-nums; }
   .history-time{ font-size:12px; color:var(--muted); }
   .history-badge{
-    font-size:11px; color:var(--muted);
+    font-size:14px; color:var(--muted);
+    transition:transform 0.2s ease;
+    display:inline-block;
   }
+  .history-badge.is-expanded{ transform:rotate(90deg); }
+  .history-expand{ padding:0 4px 14px; }
+  .history-expand .link-row{ margin-top:0; margin-bottom:10px; }
+  .history-expand .mono-embed{ margin-top:0; }
   #productSelectWrap{ margin-bottom:0; }
   footer.hint{ font-size:11px; color:var(--muted); text-align:center; padding:14px 0 4px; line-height:1.6; }
 
@@ -345,17 +358,7 @@
     <div class="link-row">
       <a href="#" target="_blank" rel="noopener" id="amazonLink" class="link-btn link-amazon" style="flex:1 1 100%;">Amazonで検索</a>
     </div>
-
-    <div id="monoEmbedSection" class="mono-embed">
-      <div class="mono-embed-header">
-        <span class="mono-embed-title">モノトレーサー(自動表示)</span>
-        <div class="mono-embed-actions">
-          <a id="monoEmbedOpenNewTab" href="#" target="_blank" rel="noopener">別タブで開く</a>
-        </div>
-      </div>
-      <p class="mono-embed-note">選択中の商品のモノトレーサーの内容が自動で表示されます。オフライン時、または埋め込みがモノトレーサー側の設定でブロックされている場合は空白のままになります。その場合は上の「別タブで開く」をご利用ください。</p>
-      <iframe id="monoEmbedIframe" src="about:blank" loading="lazy" referrerpolicy="no-referrer"></iframe>
-    </div>
+    <p class="scan-hint">モノトレーサーは下の「③ 履歴」で各項目をタップすると、その場に展開表示されます。</p>
 
     <h3>価格記録を追加</h3>
     <form id="recordForm">
@@ -427,6 +430,7 @@
   var currentCode = null;
   var historyShowCount = 20;
   var historyFilterUnconfirmedOnly = false;
+  var expandedHistoryTs = null; // 展開中の履歴項目のts(アコーディオン方式で同時に1件のみ)
 
   // 旧バージョンのデータには checked フィールドが無いため、
   // 「このアプリ上でリンクを開いた記録が無い」= 未確認 として補完する
@@ -455,9 +459,6 @@
   var currentCodeDisplay = $("currentCodeDisplay");
   var currentCodeMeta = $("currentCodeMeta");
   var amazonLink = $("amazonLink");
-  var monoEmbedSection = $("monoEmbedSection");
-  var monoEmbedIframe = $("monoEmbedIframe");
-  var monoEmbedOpenNewTab = $("monoEmbedOpenNewTab");
   var recordForm = $("recordForm");
   var priceInput = $("priceInput");
   var dateInput = $("dateInput");
@@ -577,8 +578,19 @@
     toggleCameraBtn.disabled = true;
   }
 
+  // バーコードを正常に読み取れた瞬間、カメラ映像の枠を一瞬緑色に点灯させる。
+  // CSSアニメーション(0.4秒)が自動的に元の状態へ戻すため、JS側で
+  // タイマー管理をする必要はない(同じバーコードが映り続けている間は
+  // クラスを一旦外して付け直すことでアニメーションを再トリガーする)。
+  function flashScanSuccess(){
+    readerEl.classList.remove("scan-flash");
+    void readerEl.offsetWidth; // reflowを強制してアニメーションを再スタートさせる
+    readerEl.classList.add("scan-flash");
+  }
+
   function onScanSuccess(decodedText){
     if(cameraPaused) return;
+    flashScanSuccess();
     if(decodedText === lastProcessedCode) return; // 同じコードが映り続けている間は無視
     lastProcessedCode = decodedText;
     codeInput.value = decodedText; // 手入力と同じ入力欄に反映して同じ経路で処理
@@ -770,7 +782,6 @@
       (unconfirmedCount > 0 ? " / 未確認のスキャンが" + unconfirmedCount + "件あります" : " / すべて確認済み");
 
     amazonLink.href = amazonUrl(code);
-    updateMonoEmbed(code);
 
     dateInput.value = todayForInput();
     priceInput.value = "";
@@ -790,6 +801,8 @@
   /* ===================== 履歴の未確認/確認済み管理 ===================== */
   // Amazon・モノトレーサーいずれかのリンクを開いたら、そのコードに紐づく
   // 履歴項目を「確認済み」にする(個々のスキャン日時ではなく商品単位で判定)
+  // 呼び出し側で必要な範囲だけ再描画できるよう、ここではデータの更新のみ行い
+  // 履歴一覧の再描画は行わない(呼び出し側がrenderHistory()を呼ぶ)
   function markCodeChecked(code){
     var changed = false;
     history.forEach(function(h){
@@ -797,32 +810,16 @@
     });
     if(changed){
       saveHistory(history);
-      renderHistory();
-      var relatedHistory = history.filter(function(h){ return h.code === code; });
-      currentCodeMeta.textContent = "スキャン回数: " + relatedHistory.length + "回" +
-        " / すべて確認済み";
+      if(currentCode === code){
+        var relatedHistory = history.filter(function(h){ return h.code === code; });
+        currentCodeMeta.textContent = "スキャン回数: " + relatedHistory.length + "回" +
+          " / すべて確認済み";
+      }
     }
+    return changed;
   }
-  amazonLink.addEventListener("click", function(){ if(currentCode) markCodeChecked(currentCode); });
-
-  /* ===================== モノトレーサーのiframe自動表示 ===================== */
-  // Amazonはほぼ確実に埋め込み(iframe)を禁止しているため新しいタブのままにするが、
-  // モノトレーサーはコードが確定した瞬間(新規スキャン・手入力・履歴からの選択・
-  // セレクトボックスでの切り替え、いずれも setCurrentCode を経由する)に
-  // 自動でiframeへ読み込む。相手サイトがX-Frame-Options等で埋め込みを
-  // ブロックしている場合、iframeの中身が空白になってもJavaScript側からは
-  // 確実に検知できないため、「別タブで開く」を必ず併設して逃げ道を用意する。
-  var monoEmbedLoadedCode = null; // 直近にiframeへ読み込んだコード(同じコードの再読み込みを避け通信量を節約)
-  function updateMonoEmbed(code){
-    if(code === monoEmbedLoadedCode) return;
-    monoEmbedLoadedCode = code;
-    var url = monoUrl(code);
-    monoEmbedIframe.src = url;
-    monoEmbedOpenNewTab.href = url;
-  }
-
-  monoEmbedOpenNewTab.addEventListener("click", function(){
-    if(currentCode) markCodeChecked(currentCode);
+  amazonLink.addEventListener("click", function(){
+    if(currentCode){ markCodeChecked(currentCode); renderHistory(); }
   });
 
   /* ===================== 価格記録 ===================== */
@@ -1007,22 +1004,65 @@
         html += '<div class="history-date-heading">' + formatDateHeading(item.ts) + '</div>';
         lastDateKey = dk;
       }
-      html += '<div class="history-row" data-code="' + item.code + '">' +
+      var isExpanded = (item.ts === expandedHistoryTs);
+      html += '<div class="history-item">';
+      html += '<div class="history-row" data-code="' + item.code + '" data-ts="' + item.ts + '">' +
               '<div><div class="history-code">' + item.code +
               (item.checked ? "" : '<span class="badge-unconfirmed">未確認</span>') + '</div>' +
               '<div class="history-time">' + formatDateTime(item.ts) + '</div></div>' +
-              '<div class="history-badge">›</div>' +
+              '<div class="history-badge' + (isExpanded ? " is-expanded" : "") + '">›</div>' +
               '</div>';
+      if(isExpanded){
+        html += renderHistoryExpandPanel(item.code);
+      }
+      html += '</div>';
     });
     historyList.innerHTML = html;
 
     historyList.querySelectorAll(".history-row").forEach(function(row){
       row.addEventListener("click", function(){
-        setCurrentCode(row.getAttribute("data-code"), { scroll:true });
+        var ts = Number(row.getAttribute("data-ts"));
+        var code = row.getAttribute("data-code");
+        setCurrentCode(code, { scroll:false });
+        if(expandedHistoryTs === ts){
+          expandedHistoryTs = null; // 再タップで折りたたむ
+        } else {
+          expandedHistoryTs = ts; // 展開 = モノトレーサーを表示するので確認済みにする
+          markCodeChecked(code);
+        }
+        renderHistory();
+      });
+    });
+    historyList.querySelectorAll(".history-amazon-link, .history-mono-newtab").forEach(function(link){
+      link.addEventListener("click", function(){
+        var code = link.getAttribute("data-code");
+        if(code && markCodeChecked(code)){ renderHistory(); }
       });
     });
 
     showMoreBtn.hidden = sorted.length <= historyShowCount;
+  }
+
+  // 履歴項目をタップした時だけ、その項目専用のAmazonリンク・モノトレーサーiframeを
+  // その場に展開する(遅延読み込み)。iframeは展開している間だけDOMに存在するため、
+  // 折りたたまれている項目や他の項目のぶんまで同時に読み込まれることはない。
+  function renderHistoryExpandPanel(code){
+    var mUrl = monoUrl(code);
+    return '<div class="history-expand">' +
+      '<div class="link-row">' +
+        '<a href="' + amazonUrl(code) + '" target="_blank" rel="noopener" class="link-btn link-amazon history-amazon-link" data-code="' + code + '" style="flex:1 1 100%;">Amazonで検索</a>' +
+      '</div>' +
+      '<div class="mono-embed">' +
+        '<div class="mono-embed-header">' +
+          '<span class="mono-embed-title">モノトレーサー</span>' +
+          '<div class="mono-embed-actions">' +
+            '<a href="' + mUrl + '" target="_blank" rel="noopener" class="history-mono-newtab" data-code="' + code + '">別タブで開く</a>' +
+          '</div>' +
+        '</div>' +
+        '<p class="mono-embed-note">埋め込みが空白のままの場合、モノトレーサー側の設定によりブロックされています。「別タブで開く」をご利用ください。</p>' +
+        '<iframe src="' + mUrl + '" loading="lazy" referrerpolicy="no-referrer"></iframe>' +
+      '</div>' +
+    '</div>';
   }
 
   showMoreBtn.addEventListener("click", function(){
