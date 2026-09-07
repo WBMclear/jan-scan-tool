@@ -68,6 +68,7 @@
     min-height:220px;
   }
   #reader video{ width:100% !important; }
+  .scan-hint{ font-size:12px; color:var(--muted); margin:8px 0 0; line-height:1.5; }
   .btn-row{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
   button{
     font-family:inherit;
@@ -258,6 +259,50 @@
     margin-left:6px;
     vertical-align:middle;
   }
+
+  .mono-embed{
+    margin-top:12px;
+    border:1px solid var(--border);
+    border-radius:12px;
+    overflow:hidden;
+    background:var(--bg);
+  }
+  .mono-embed-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    padding:8px 10px;
+    background:var(--card);
+    border-bottom:1px solid var(--border);
+  }
+  .mono-embed-title{ font-size:13px; font-weight:700; color:var(--fg); }
+  .mono-embed-actions{ display:flex; align-items:center; gap:10px; }
+  .mono-embed-actions a{ font-size:12px; color:var(--accent); text-decoration:none; font-weight:600; }
+  .mono-embed-close{
+    background:var(--border);
+    color:var(--fg);
+    font-size:12px;
+    font-weight:700;
+    border:none;
+    border-radius:8px;
+    padding:6px 10px;
+    cursor:pointer;
+  }
+  .mono-embed-note{
+    font-size:11px;
+    color:var(--muted);
+    padding:8px 10px 0;
+    line-height:1.5;
+  }
+  .mono-embed iframe{
+    width:100%;
+    height:65vh;
+    min-height:360px;
+    border:0;
+    display:block;
+    background:var(--card);
+  }
 </style>
 </head>
 <body>
@@ -282,6 +327,7 @@
   <section class="card">
     <h2>① スキャン / 入力</h2>
     <div id="reader"></div>
+    <p class="scan-hint">画面全体がバーコードの検出範囲です。枠に収めようと近づきすぎるとピントが合わなくなるため、バーコード全体が画面に映る距離でかざしてください。</p>
     <div class="btn-row">
       <button id="toggleCameraBtn" class="btn-primary">カメラ起動</button>
       <button id="pauseBtn" class="btn-secondary" disabled>一時停止</button>
@@ -308,7 +354,19 @@
 
     <div class="link-row">
       <a href="#" target="_blank" rel="noopener" id="amazonLink" class="link-btn link-amazon">Amazonで検索</a>
-      <a href="#" target="_blank" rel="noopener" id="monoLink" class="link-btn link-mono">モノトレーサー</a>
+      <button type="button" id="monoLink" class="link-btn link-mono">モノトレーサーで見る</button>
+    </div>
+
+    <div id="monoEmbedSection" class="mono-embed" hidden>
+      <div class="mono-embed-header">
+        <span class="mono-embed-title">モノトレーサー</span>
+        <div class="mono-embed-actions">
+          <a id="monoEmbedOpenNewTab" href="#" target="_blank" rel="noopener">別タブで開く</a>
+          <button type="button" id="monoEmbedCloseBtn" class="mono-embed-close">閉じる</button>
+        </div>
+      </div>
+      <p class="mono-embed-note">埋め込み表示が空白のままの場合、モノトレーサー側の設定により埋め込み表示がブロックされています。上の「別タブで開く」をご利用ください。</p>
+      <iframe id="monoEmbedIframe" src="about:blank" loading="lazy" referrerpolicy="no-referrer"></iframe>
     </div>
 
     <h3>価格記録を追加</h3>
@@ -409,6 +467,10 @@
   var currentCodeMeta = $("currentCodeMeta");
   var amazonLink = $("amazonLink");
   var monoLink = $("monoLink");
+  var monoEmbedSection = $("monoEmbedSection");
+  var monoEmbedIframe = $("monoEmbedIframe");
+  var monoEmbedOpenNewTab = $("monoEmbedOpenNewTab");
+  var monoEmbedCloseBtn = $("monoEmbedCloseBtn");
   var recordForm = $("recordForm");
   var priceInput = $("priceInput");
   var dateInput = $("dateInput");
@@ -558,9 +620,12 @@
       return;
     }
 
+    // qrboxを指定しない(=映像全体を検出対象にする)。枠に収めようとして
+    // カメラを近づけすぎると最短合焦距離を超えてピンボケし、逆に読み取れなく
+    // なるため、画面全体をスキャン範囲にして距離の融通を利かせる。
     html5QrCode.start(
       { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 260, height: 160 } },
+      { fps: 10 },
       onScanSuccess,
       onScanFailure
     ).then(function(){
@@ -644,6 +709,13 @@
   function setCurrentCode(code, opts){
     opts = opts || {};
     var wasHidden = currentSection.hidden;
+
+    // 表示中の商品が切り替わる場合は、古い商品のモノトレーサー埋め込みを
+    // 表示したままにしないよう閉じておく
+    if(code !== currentCode){
+      closeMonoEmbed();
+    }
+
     currentCode = code;
     currentSection.hidden = false;
 
@@ -656,7 +728,6 @@
       (unconfirmedCount > 0 ? " / 未確認のスキャンが" + unconfirmedCount + "件あります" : " / すべて確認済み");
 
     amazonLink.href = amazonUrl(code);
-    monoLink.href = monoUrl(code);
 
     dateInput.value = todayForInput();
     priceInput.value = "";
@@ -690,7 +761,37 @@
     }
   }
   amazonLink.addEventListener("click", function(){ if(currentCode) markCodeChecked(currentCode); });
-  monoLink.addEventListener("click", function(){ if(currentCode) markCodeChecked(currentCode); });
+
+  /* ===================== モノトレーサーのiframe埋め込み ===================== */
+  // Amazonはほぼ確実に埋め込み(iframe)を禁止しているため新しいタブのままにするが、
+  // モノトレーサーは同一画面内にiframeで埋め込む。ただし相手サイトが
+  // X-Frame-Options等で埋め込みをブロックしている場合、iframeの中身が空白に
+  // なってもJavaScript側からは確実に検知できないため、「別タブで開く」を
+  // 必ず併設して逃げ道を用意する。
+  function openMonoEmbed(code){
+    var url = monoUrl(code);
+    monoEmbedIframe.src = url;
+    monoEmbedOpenNewTab.href = url;
+    monoEmbedSection.hidden = false;
+    monoEmbedSection.scrollIntoView({ behavior:"smooth", block:"start" });
+  }
+  function closeMonoEmbed(){
+    if(monoEmbedSection.hidden) return;
+    monoEmbedSection.hidden = true;
+    monoEmbedIframe.src = "about:blank"; // 裏で読み込み続けないよう解放する
+  }
+
+  monoLink.addEventListener("click", function(){
+    if(!currentCode) return;
+    markCodeChecked(currentCode);
+    openMonoEmbed(currentCode);
+  });
+  monoEmbedOpenNewTab.addEventListener("click", function(){
+    if(currentCode) markCodeChecked(currentCode);
+  });
+  monoEmbedCloseBtn.addEventListener("click", function(){
+    closeMonoEmbed();
+  });
 
   /* ===================== 価格記録 ===================== */
   recordForm.addEventListener("submit", function(e){
