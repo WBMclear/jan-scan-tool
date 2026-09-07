@@ -622,10 +622,23 @@
     // qrboxを指定しない(=映像全体を検出対象にする)。枠に収めようとして
     // カメラを近づけすぎると最短合焦距離を超えてピンボケし、逆に読み取れなく
     // なるため、画面全体をスキャン範囲にして距離の融通を利かせる。
-    // videoConstraintsで解像度を明示的に指定し、読み取り精度を上げる。
+    //
+    // 解像度の指定は第1引数(カメラ選択用の facingMode/deviceId 指定)に
+    // width/height を混ぜると、html5-qrcode内部のカメラ選択バリデーションに
+    // 弾かれてgetUserMediaへ到達する前に即座に失敗する(権限ダイアログが
+    // 一切出ないまま「起動できませんでした」になる)。第2引数(スキャン設定)の
+    // videoConstraints に facingMode を含めた完全なMediaTrackConstraintsを
+    // 渡すのが正しい方法(指定した場合、第1引数のfacingModeは上書きされる)。
     html5QrCode.start(
-      { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
-      { fps: 10 },
+      { facingMode: "environment" },
+      {
+        fps: 10,
+        videoConstraints: {
+          facingMode: "environment",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      },
       onScanSuccess,
       onScanFailure
     ).then(function(){
