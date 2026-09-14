@@ -42,6 +42,7 @@
     background:var(--bg); color:var(--fg);
     font-family:-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
     -webkit-text-size-adjust:100%;
+    overflow-x:hidden;
   }
   body{
     padding-bottom: calc(24px + env(safe-area-inset-bottom));
@@ -325,6 +326,19 @@
     display:block;
     background:var(--card);
   }
+
+  /*
+   * アコーディオンが閉じている間、モノトレーサーiframeをここに退避させる。
+   * display:noneにすると非表示中は読み込みが止まる/遅延する場合があるため、
+   * position:fixedで画面外に配置するだけにとどめ、レイアウト上は無害化する。
+   */
+  #monoFramePool{
+    position:fixed;
+    left:-9999px;
+    top:0;
+    width:340px;
+    pointer-events:none;
+  }
 </style>
 </head>
 <body>
@@ -420,6 +434,14 @@
   <footer class="hint">データは端末内(localStorage)にのみ保存され、サーバーには送信されません。</footer>
 </div>
 
+<!--
+  モノトレーサーiframeの待避プール。
+  スキャン直後に生成したiframeや、折りたたまれて非表示中のiframeを
+  ここに一時的に格納しておく。display:noneではなくposition:fixedで画面外に
+  配置することで、非表示中でも裏側での読み込みが止まらないようにする。
+-->
+<div id="monoFramePool" aria-hidden="true"></div>
+
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 (function(){
@@ -454,6 +476,7 @@
   var historyShowCount = 20;
   var historyFilterUnconfirmedOnly = false;
   var expandedHistoryTs = null; // 展開中の履歴項目のts(アコーディオン方式で同時に1件のみ)
+  var monoPanels = {}; // ts -> 履歴項目1件につき1個だけ生成するモノトレーサーiframeの永続DOM要素
 
   // 旧バージョンのデータには checked フィールドが無いため、
   // 「このアプリ上でリンクを開いた記録が無い」= 未確認 として補完する
@@ -491,6 +514,7 @@
   var recordsTableWrap = $("recordsTableWrap");
 
   var historyList = $("historyList");
+  var monoFramePool = $("monoFramePool");
   var showMoreBtn = $("showMoreBtn");
   var historyEmptyMsg = $("historyEmptyMsg");
   var historySection = $("historySection");
@@ -562,6 +586,12 @@
     var entry = { code: code, ts: Date.now(), checked: false };
     history.push(entry);
     saveHistory(history);
+
+    // 新規スキャン項目は、アコーディオンが未展開のままでも
+    // この時点で裏側にモノトレーサーiframeの読み込みを開始しておく。
+    // (localStorageから復元した過去の履歴には行わない。既存分は
+    //  ユーザーが▽をタップした時点で初めて getOrCreateMonoPanel を呼ぶ)
+    getOrCreateMonoPanel(entry);
 
     setCurrentCode(code);
     renderHistory();
@@ -996,6 +1026,13 @@
 
   /* ===================== 履歴一覧 ===================== */
   function renderHistory(){
+    // historyList.innerHTML の再構築で、展開中のモノトレーサーiframeが
+    // 一緒に破棄されて再読み込みになってしまわないよう、先にプールへ退避させる。
+    // (Node.appendChildによる「移動」は、いったんinnerHTML等で除去されたのちの
+    //  再挿入とは違い、同じiframeの読み込み状態を保ったまま位置だけ変えられる)
+    var mountedPanel = historyList.querySelector(".history-expand");
+    if(mountedPanel){ monoFramePool.appendChild(mountedPanel); }
+
     var unconfirmedTotal = history.filter(function(h){ return !h.checked; }).length;
 
     if(unconfirmedTotal > 0){
@@ -1032,6 +1069,7 @@
 
     var html = "";
     var lastDateKey = null;
+    var expandTargetItem = null; // 展開中の項目(同時に最大1件)。あとでパネルをこの項目のスロットへ移す
     visible.forEach(function(item){
       var dk = dateKey(item.ts);
       if(dk !== lastDateKey){
@@ -1039,7 +1077,7 @@
         lastDateKey = dk;
       }
       var isExpanded = (item.ts === expandedHistoryTs);
-      html += '<div class="history-item">';
+      html += '<div class="history-item" data-item-ts="' + item.ts + '">';
       html += '<div class="history-row" data-code="' + item.code + '" data-ts="' + item.ts + '">' +
               '<div><div class="history-code">' + item.code +
               (item.checked ? "" : '<span class="badge-unconfirmed">未確認</span>') + '</div>' +
@@ -1047,11 +1085,19 @@
               '<div class="history-badge' + (isExpanded ? " is-expanded" : "") + '">›</div>' +
               '</div>';
       if(isExpanded){
-        html += renderHistoryExpandPanel(item.code);
+        // ここには空のスロットだけを置く。実際のiframeを含むパネルは
+        // (プールから、あるいは初回なら新規生成して)innerHTML確定後に移動させる。
+        html += '<div class="history-expand-slot"></div>';
+        expandTargetItem = item;
       }
       html += '</div>';
     });
     historyList.innerHTML = html;
+
+    if(expandTargetItem){
+      var slot = historyList.querySelector('.history-item[data-item-ts="' + expandTargetItem.ts + '"] .history-expand-slot');
+      if(slot){ slot.appendChild(getOrCreateMonoPanel(expandTargetItem)); }
+    }
 
     historyList.querySelectorAll(".history-row").forEach(function(row){
       row.addEventListener("click", function(){
@@ -1059,30 +1105,32 @@
         var code = row.getAttribute("data-code");
         setCurrentCode(code, { scroll:false });
         if(expandedHistoryTs === ts){
-          expandedHistoryTs = null; // 再タップで折りたたむ
+          expandedHistoryTs = null; // 再タップで折りたたむ(表示/非表示の切り替えのみ)
         } else {
-          expandedHistoryTs = ts; // 展開 = モノトレーサーを表示するので確認済みにする
+          expandedHistoryTs = ts; // 展開 = 表示するだけ。読み込みは既にスキャン時/初回展開時に開始済み
           markCodeChecked(code);
         }
         renderHistory();
       });
     });
-    historyList.querySelectorAll(".history-amazon-link, .history-mono-newtab").forEach(function(link){
-      link.addEventListener("click", function(){
-        var code = link.getAttribute("data-code");
-        if(code && markCodeChecked(code)){ renderHistory(); }
-      });
-    });
-
     showMoreBtn.hidden = sorted.length <= historyShowCount;
   }
 
-  // 履歴項目をタップした時だけ、その項目専用のAmazonリンク・モノトレーサーiframeを
-  // その場に展開する(遅延読み込み)。iframeは展開している間だけDOMに存在するため、
-  // 折りたたまれている項目や他の項目のぶんまで同時に読み込まれることはない。
-  function renderHistoryExpandPanel(code){
+  // 履歴項目1件につき1個だけ、Amazonリンク+モノトレーサーiframeのDOM要素を生成する。
+  // - 新規スキャン時: confirmCode()から呼ばれ、アコーディオンが閉じたまま
+  //   裏側(#monoFramePool)で読み込みを開始する。
+  // - 過去の履歴(localStorageから復元分): ここではまだ呼ばれない。
+  //   ユーザーが▽を初めてタップした時にrenderHistory()経由で初めて呼ばれる。
+  // 一度生成したiframeはmonoPanelsに保持され、以後は同じDOM要素を
+  // プールとスロットの間で移動させるだけなので、再読み込みは発生しない。
+  function getOrCreateMonoPanel(item){
+    var existing = monoPanels[item.ts];
+    if(existing){ return existing; }
+
+    var code = item.code;
     var mUrl = monoUrl(code);
-    return '<div class="history-expand">' +
+    var tmp = document.createElement("div");
+    tmp.innerHTML = '<div class="history-expand">' +
       '<div class="link-row">' +
         '<a href="' + amazonUrl(code) + '" target="_blank" rel="noopener" class="link-btn link-amazon history-amazon-link" data-code="' + code + '" style="flex:1 1 100%;">Amazonで検索</a>' +
       '</div>' +
@@ -1094,9 +1142,22 @@
           '</div>' +
         '</div>' +
         '<p class="mono-embed-note">埋め込みが空白のままの場合、モノトレーサー側の設定によりブロックされています。「別タブで開く」をご利用ください。</p>' +
-        '<iframe src="' + mUrl + '" loading="lazy" referrerpolicy="no-referrer"></iframe>' +
+        '<iframe src="' + mUrl + '" referrerpolicy="no-referrer"></iframe>' +
       '</div>' +
     '</div>';
+    var panel = tmp.firstElementChild;
+
+    panel.querySelectorAll(".history-amazon-link, .history-mono-newtab").forEach(function(link){
+      link.addEventListener("click", function(){
+        if(markCodeChecked(code)){ renderHistory(); }
+      });
+    });
+
+    monoPanels[item.ts] = panel;
+    // #monoFramePoolに接続した瞬間からiframeの読み込みが始まる
+    // (この時点ではアコーディオンは閉じたままで見た目に変化はない)
+    monoFramePool.appendChild(panel);
+    return panel;
   }
 
   showMoreBtn.addEventListener("click", function(){
