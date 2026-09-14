@@ -48,7 +48,7 @@
     padding-bottom: calc(24px + env(safe-area-inset-bottom));
     padding-top: env(safe-area-inset-top);
   }
-  #app{ max-width:560px; margin:0 auto; padding:12px 14px 0; }
+  #app{ max-width:560px; margin:0 auto; padding:12px 14px 0; position:relative; }
   h1{ font-size:19px; margin:10px 0 4px; }
   h2{ font-size:16px; margin:0 0 10px; }
   h3{ font-size:14px; margin:16px 0 8px; color:var(--muted); }
@@ -224,7 +224,7 @@
     display:inline-block;
   }
   .history-badge.is-expanded{ transform:rotate(90deg); }
-  .history-expand{ padding:0 4px 14px; }
+  .history-expand{ padding:0 4px 14px; z-index:5; }
   .history-expand .link-row{ margin-top:0; margin-bottom:10px; }
   .history-expand .mono-embed{ margin-top:0; }
   #productSelectWrap{ margin-bottom:0; }
@@ -328,17 +328,30 @@
   }
 
   /*
-   * アコーディオンが閉じている間、モノトレーサーiframeをここに退避させる。
-   * display:noneにすると非表示中は読み込みが止まる/遅延する場合があるため、
-   * position:fixedで画面外に配置するだけにとどめ、レイアウト上は無害化する。
+   * モノトレーサーiframeパネルの固定アンカー。#app(position:relative)の
+   * 左上(0,0)に位置する幅・高さ0の起点で、各パネル(.history-expand)は
+   * ここを絶対配置の基準にして常にここに"居続ける"(DOM上のappendChildによる
+   * 移動は二度と行わない)。表示位置はJSでtop/leftを書き換えるだけにして、
+   * 生きたiframeを再接続して読み込み直させることを避ける。
    */
   #monoFramePool{
-    position:fixed;
-    left:-9999px;
+    position:absolute;
     top:0;
-    width:340px;
+    left:0;
+    width:0;
+    height:0;
+    overflow:visible;
+  }
+  /* 展開時にJSがtop/left/widthを上書きするまでの初期状態(=折りたたみ時の退避先) */
+  .history-expand{
+    position:absolute;
+    top:-9999px;
+    left:-9999px;
+    width:520px;
+    max-width:92vw;
     pointer-events:none;
   }
+  .history-expand.is-active{ pointer-events:auto; }
 </style>
 </head>
 <body>
@@ -432,15 +445,15 @@
   </section>
 
   <footer class="hint">データは端末内(localStorage)にのみ保存され、サーバーには送信されません。</footer>
-</div>
 
-<!--
-  モノトレーサーiframeの待避プール。
-  スキャン直後に生成したiframeや、折りたたまれて非表示中のiframeを
-  ここに一時的に格納しておく。display:noneではなくposition:fixedで画面外に
-  配置することで、非表示中でも裏側での読み込みが止まらないようにする。
--->
-<div id="monoFramePool" aria-hidden="true"></div>
+  <!--
+    モノトレーサーiframeパネルの永続的なDOM上の置き場所。
+    ここに一度appendChildしたパネルは、以後二度と別の場所へappendChildしない
+    (見た目の表示位置だけをCSSのtop/left/widthで動かす)。#appの内側に置くことで
+    position:relativeな#appを基準にした絶対配置ができるようにしている。
+  -->
+  <div id="monoFramePool" aria-hidden="true"></div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
@@ -477,6 +490,8 @@
   var historyFilterUnconfirmedOnly = false;
   var expandedHistoryTs = null; // 展開中の履歴項目のts(アコーディオン方式で同時に1件のみ)
   var monoPanels = {}; // ts -> 履歴項目1件につき1個だけ生成するモノトレーサーiframeの永続DOM要素
+  var activeMonoPanel = null; // 現在スロットの位置に重ねて表示しているパネル(あれば1つだけ)
+  var activeMonoSlot = null;  // そのパネルの位置合わせ先スロット要素
 
   // 旧バージョンのデータには checked フィールドが無いため、
   // 「このアプリ上でリンクを開いた記録が無い」= 未確認 として補完する
@@ -490,6 +505,7 @@
 
   /* ===================== DOM 参照 ===================== */
   var $ = function(id){ return document.getElementById(id); };
+  var appEl = $("app"); // モノトレーサーパネルの絶対配置の基準(position:relative)
   var readerEl = $("reader");
   var scanFlashOverlay = $("scanFlashOverlay");
   var toggleCameraBtn = $("toggleCameraBtn");
@@ -1026,13 +1042,6 @@
 
   /* ===================== 履歴一覧 ===================== */
   function renderHistory(){
-    // historyList.innerHTML の再構築で、展開中のモノトレーサーiframeが
-    // 一緒に破棄されて再読み込みになってしまわないよう、先にプールへ退避させる。
-    // (Node.appendChildによる「移動」は、いったんinnerHTML等で除去されたのちの
-    //  再挿入とは違い、同じiframeの読み込み状態を保ったまま位置だけ変えられる)
-    var mountedPanel = historyList.querySelector(".history-expand");
-    if(mountedPanel){ monoFramePool.appendChild(mountedPanel); }
-
     var unconfirmedTotal = history.filter(function(h){ return !h.checked; }).length;
 
     if(unconfirmedTotal > 0){
@@ -1085,8 +1094,9 @@
               '<div class="history-badge' + (isExpanded ? " is-expanded" : "") + '">›</div>' +
               '</div>';
       if(isExpanded){
-        // ここには空のスロットだけを置く。実際のiframeを含むパネルは
-        // (プールから、あるいは初回なら新規生成して)innerHTML確定後に移動させる。
+        // ここには位置合わせ用の空スロットだけを置く。パネル本体(iframe)は
+        // DOM上ではここに存在せず、#monoFramePool内に居続けたまま、
+        // innerHTML確定後にこのスロットの座標へCSSで重ねて表示するだけ。
         html += '<div class="history-expand-slot"></div>';
         expandTargetItem = item;
       }
@@ -1094,10 +1104,25 @@
     });
     historyList.innerHTML = html;
 
+    // 展開中のパネルをDOM上で移動させる代わりに、スロットの画面上の位置を
+    // 測って、パネルにCSSでtop/left/widthを直接指定するだけで重ねて見せる。
+    // パネル自体のDOM上の親(#monoFramePool)はここでも一切変更しない。
+    var newActivePanel = null;
+    var newActiveSlot = null;
     if(expandTargetItem){
       var slot = historyList.querySelector('.history-item[data-item-ts="' + expandTargetItem.ts + '"] .history-expand-slot');
-      if(slot){ slot.appendChild(getOrCreateMonoPanel(expandTargetItem)); }
+      if(slot){
+        var panel = getOrCreateMonoPanel(expandTargetItem);
+        positionPanelOverSlot(panel, slot);
+        newActivePanel = panel;
+        newActiveSlot = slot;
+      }
     }
+    if(activeMonoPanel && activeMonoPanel !== newActivePanel){
+      parkPanel(activeMonoPanel); // 前に展開していたパネルは画面外へ退避(DOM上の移動はしない)
+    }
+    activeMonoPanel = newActivePanel;
+    activeMonoSlot = newActiveSlot;
 
     historyList.querySelectorAll(".history-row").forEach(function(row){
       row.addEventListener("click", function(){
@@ -1121,8 +1146,9 @@
   //   裏側(#monoFramePool)で読み込みを開始する。
   // - 過去の履歴(localStorageから復元分): ここではまだ呼ばれない。
   //   ユーザーが▽を初めてタップした時にrenderHistory()経由で初めて呼ばれる。
-  // 一度生成したiframeはmonoPanelsに保持され、以後は同じDOM要素を
-  // プールとスロットの間で移動させるだけなので、再読み込みは発生しない。
+  // 生成したパネルは#monoFramePoolに一度だけappendChildし、以後は二度と
+  // 別の場所へappendChildしない(=DOM上の親は常に同じ)。表示/非表示の切り替えは
+  // parkPanel()/positionPanelOverSlot()がCSSのtop/left/widthを書き換えるだけで行う。
   function getOrCreateMonoPanel(item){
     var existing = monoPanels[item.ts];
     if(existing){ return existing; }
@@ -1154,11 +1180,44 @@
     });
 
     monoPanels[item.ts] = panel;
-    // #monoFramePoolに接続した瞬間からiframeの読み込みが始まる
-    // (この時点ではアコーディオンは閉じたままで見た目に変化はない)
+    parkPanel(panel); // 生成直後は必ず折りたたみ(画面外)状態にしておく
+    // #monoFramePoolへの接続はこの1回のみ。以後、このパネルがappendChildで
+    // 別の親に移動することは二度とない(iframeの再読み込みを避けるため)。
     monoFramePool.appendChild(panel);
     return panel;
   }
+
+  // 折りたたみ状態: パネルを画面外へ退避させる(DOM上の位置は変えない)
+  function parkPanel(panel){
+    panel.style.top = "-9999px";
+    panel.style.left = "-9999px";
+    panel.classList.remove("is-active");
+  }
+
+  // 展開状態: スロット要素の画面上の位置を測り、パネルにCSSで重ねて表示する
+  function positionPanelOverSlot(panel, slotEl){
+    // パネルは常に幅を持っているので、折りたたみ中でも高さを測ることができる。
+    // これをスロット自身の高さとして反映し、ドキュメントフロー上に
+    // パネル分の領域をきちんと確保する(=以降の履歴項目が正しく下に押し出される)。
+    panel.style.width = slotEl.getBoundingClientRect().width + "px";
+    slotEl.style.height = panel.offsetHeight + "px";
+
+    var appRect = appEl.getBoundingClientRect();
+    var slotRect = slotEl.getBoundingClientRect();
+    panel.style.top = (slotRect.top - appRect.top) + "px";
+    panel.style.left = (slotRect.left - appRect.left) + "px";
+    panel.classList.add("is-active");
+  }
+
+  // ウィンドウのリサイズ/回転でスロットの画面上の位置がずれた場合に、
+  // 現在表示中のパネルの位置だけを再計算する(DOM上の移動は発生しない)。
+  function repositionActiveMonoPanel(){
+    if(activeMonoPanel && activeMonoSlot && document.body.contains(activeMonoSlot)){
+      positionPanelOverSlot(activeMonoPanel, activeMonoSlot);
+    }
+  }
+  window.addEventListener("resize", repositionActiveMonoPanel);
+  window.addEventListener("orientationchange", repositionActiveMonoPanel);
 
   showMoreBtn.addEventListener("click", function(){
     historyShowCount += 20;
